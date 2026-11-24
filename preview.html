@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Interview Study Material | Study with Dev</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#112944;color:#172b45;font:15px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}#entry{min-height:100vh;display:grid;place-items:center;padding:24px}.login-card{background:white;border-radius:20px;width:min(440px,100%);padding:30px;box-shadow:0 16px 60px #0003}h1{font-size:25px;line-height:1.25;margin:0 0 12px}.intro,#entryStatus{font-size:13px;color:#526780}.brandline{font-size:12px;color:#075cb5;font-weight:650;margin-bottom:14px}label{display:block;font-size:13px;font-weight:650;margin:14px 0 5px}input{width:100%;font:inherit;border:1px solid #b7c9df;border-radius:8px;padding:12px;background:white;color:#172b45}input:focus-visible,button:focus-visible{outline:3px solid #7cb7f8;outline-offset:2px}button{width:100%;border:0;border-radius:8px;background:#075cb5;color:white;font:inherit;font-weight:700;padding:12px;margin-top:18px;cursor:pointer}button:disabled{opacity:.6;cursor:wait}#entryStatus{overflow-wrap:anywhere;min-height:24px;margin:12px 0 0}#entryStatus.error{color:#aa2929}small{color:#526780}
+</style>
+</head>
+<body>
+<main id="entry"><form class="login-card" id="entryForm">
+<div class="brandline">Equentis chhodo ! &nbsp;with love Dev.</div>
+<h1>Interview Study Material</h1>
+<p class="intro">Sign in to your personal study profile. Your progress, quizzes and notes are kept separate from other learners. The spreadsheet owner can view saved data.</p>
+<label for="entryEmail">Assigned email</label>
+<input id="entryEmail" name="email" type="email" autocomplete="username" required>
+<label for="entryKey">Private access key</label>
+<input id="entryKey" name="password" type="password" autocomplete="current-password" required>
+<button id="entrySubmit" type="submit">Open my study profile</button>
+<p id="entryStatus" role="status" aria-live="polite">shree shree devaansh ji se mange apna key</p>
+</form></main>
+<script>
+(() => {
+  'use strict';
+  const API = 'https://studywithdev-api.mdevaansh-592.workers.dev/api';
+  const actions = new Set(['loadStudyPage','loadStudyState','saveStudyState','listLearnerData','downloadNotesPdf']);
+  async function call(action, args) {
+    if (!actions.has(action)) throw new Error('Unsupported action.');
+    const response = await fetch(API, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,args}),credentials:'omit',cache:'no-store',redirect:'error'});
+    let result;
+    try { result = await response.json(); } catch { throw new Error('The API returned an invalid response.'); }
+    if (!response.ok || !result || result.ok !== true) throw new Error(result?.error || 'Could not connect to the study server.');
+    return result.data;
+  }
+  // Match the existing portal's Apps Script RPC interface without publishing the curriculum or secrets.
+  function runner(success, failure) {
+    const bridge = {
+      withSuccessHandler(fn) { return runner(fn, failure); },
+      withFailureHandler(fn) { return runner(success, fn); }
+    };
+    for (const name of actions) {
+      bridge[name] = (...args) => { call(name,args).then(v => { if(typeof success==='function') success(v); }, e => { if(typeof failure==='function') failure(e); }); };
+    }
+    return bridge;
+  }
+  function installPortal(html) {
+    if (typeof html !== 'string' || html.length > 8000000) throw new Error('The study content response is invalid.');
+    const parsed = new DOMParser().parseFromString(html,'text/html');
+    if (!parsed.getElementById('memberLogin') || !parsed.getElementById('memberEmail') || !parsed.getElementById('memberKey') || !parsed.getElementById('memberSubmit') || !parsed.getElementById('studyPayload')) throw new Error('The API did not return the expected study portal. Contact the owner.');
+    const scripts = Array.from(parsed.querySelectorAll('script'));
+    if (!scripts.length || scripts.some(s => s.hasAttribute('src'))) throw new Error('Unsupported study portal script format. Contact the owner.');
+    // The Apps Script HTML is our own authenticated application. Parse it in an inert document,
+    // install its existing interface, then run the inline scripts in the original order.
+    window.google = {script:{run:runner()}};
+    document.documentElement.lang = parsed.documentElement.lang || 'en';
+    document.head.replaceChildren(...Array.from(parsed.head.childNodes));
+    document.body.replaceChildren(...Array.from(parsed.body.childNodes));
+    // Preserve the browser URL. No iframe or navigation to the Apps Script endpoint is necessary.
+    for (const old of Array.from(document.querySelectorAll('script'))) {
+      const fresh = document.createElement('script');
+      for (const attr of old.attributes) fresh.setAttribute(attr.name,attr.value);
+      fresh.textContent = old.textContent;
+      old.replaceWith(fresh);
+    }
+  }
+  function ready(timeout=20000) {
+    return new Promise((resolve,reject) => {
+      const start = Date.now();
+      const id = setInterval(() => {
+        if (window.__studyReady === true) {clearInterval(id); resolve();}
+        else if (Date.now()-start > timeout) {clearInterval(id); reject(new Error('The study portal did not finish loading. Refresh and try again.'));}
+      },50);
+    });
+  }
+  const form = document.getElementById('entryForm');
+  const status = document.getElementById('entryStatus');
+  const button = document.getElementById('entrySubmit');
+  let busy = false;
+  form.addEventListener('submit',async e => {
+    e.preventDefault(); if (busy) return; busy = true;
+    let email = document.getElementById('entryEmail').value.trim().toLowerCase();
+    let passkey = document.getElementById('entryKey').value.trim();
+    button.disabled = true; status.classList.remove('error'); status.textContent = 'Checking access and opening your study portal…';
+    let installed = false;
+    try {
+      const result = await call('loadStudyPage',[email,passkey]);
+      // The backend first validates the user's key before returning any study content.
+      installPortal(result?.html); installed = true;
+      await ready();
+      const gate = document.getElementById('memberGate');
+      let opened = false;
+      const observer = new MutationObserver(() => {
+        if (gate.hidden) opened = true;
+        else if (opened) {observer.disconnect(); location.replace(location.pathname);}
+      });
+      observer.observe(gate,{attributes:true,attributeFilter:['hidden']});
+      document.getElementById('memberEmail').value = email;
+      document.getElementById('memberKey').value = passkey;
+      document.getElementById('memberLogin').requestSubmit();
+      // The existing application now authenticates and loads its state, using the API bridge.
+    } catch (err) {
+      const message = err?.message || 'Unable to open the portal.';
+      if (installed || !form.isConnected) {
+        const target = document.getElementById('loginStatus');
+        if (target) target.textContent = message;
+        const back = document.createElement('a'); back.textContent = 'Return to login'; back.href = location.pathname;
+        if(target) target.after(back); else document.body.append(back);
+      } else { status.textContent = message; status.classList.add('error'); }
+    } finally {
+      email = ''; passkey = '';
+      if (form.isConnected) {button.disabled = false; busy = false;}
+    }
+  });
+})();
+</script>
+</body>
+</html>
